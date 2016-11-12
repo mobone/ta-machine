@@ -27,7 +27,7 @@ class stock():
         self.get_current_price()
         self.df = self.df.reset_index(drop=True)
         self.source = self.df['Close'].values
-        print(self.df)
+        
         self.get_BB()
         self.get_KC()
         self.get_SQZ()
@@ -62,7 +62,6 @@ class stock():
     def get_BB(self):
         basis = ta.SMA(self.source, timeperiod=self.length)
         dev = 1.5 * stat.stdev(self.source, self.length)
-        print(len(basis), len(self.df))
         self.df['upperBB'] = basis + dev
         self.df['lowerBB'] = basis - dev
 
@@ -125,7 +124,7 @@ class stock():
                 else:
                     result_list.append('maroon')
 
-        print(len(result_list))
+
         self.df = self.df[self.lengthKC+1:]
         self.df['SQZ'] = result_list
 
@@ -133,17 +132,7 @@ class stock():
 
 
         self.df = self.df.ix[:,['Date','Close','SQZ']]
-        print(self.df)
-        self.df.to_csv("out.csv")
-
-
-
-
-
-
-
-
-
-
-
-s = stock('svu')
+        try:
+            self.df.to_csv("out.csv")
+        except:
+            pass
