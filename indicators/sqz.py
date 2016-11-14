@@ -24,10 +24,14 @@ class stock():
         self.multKC = 1.5
 
         self.get_history()
-        self.get_current_price()
+
+        if int(datetime.now().strftime('%H')) < 12:
+            self.get_current_price()
         self.df = self.df.reset_index(drop=True)
+
+
         self.source = self.df['Close'].values
-        
+
         self.get_BB()
         self.get_KC()
         self.get_SQZ()
@@ -37,7 +41,7 @@ class stock():
         df = pd.read_csv(url)
         self.df = df.iloc[::-1]
 
-        self.df = self.df.ix[:,["Date","High", "Low", "Close"]]
+        self.df = self.df.ix[:,["Date","High", "Low", "Open", "Close"]]
 
 
 
@@ -55,9 +59,6 @@ class stock():
 
         # todo, update with high and low aswell
         self.df = self.df.append(pd.DataFrame([{"Date": cur_date, "Close": cur_price, "Low": cur_price,  "High": cur_price}]))
-
-
-
 
     def get_BB(self):
         basis = ta.SMA(self.source, timeperiod=self.length)
@@ -86,10 +87,7 @@ class stock():
         x_mean = stat.mean([highest_high, lowest_low])
         y_mean_list = []
         for y in self.ma:
-            y_mean = stat.mean([x_mean, y])
-
-            y_mean_list.append(y_mean)
-
+            y_mean_list.append(stat.mean([x_mean, y]))
 
         self.df['lazy_bear_mean'] = self.source - y_mean_list
 
@@ -102,7 +100,6 @@ class stock():
 
             if len(cur_linreg_data)!=self.lengthKC+1:
                 continue
-
 
             x = np.arange(self.lengthKC+1, dtype=float).reshape((self.lengthKC+1, 1))
             y = cur_linreg_data.reshape(self.lengthKC+1, 1)
@@ -131,7 +128,7 @@ class stock():
 
 
 
-        self.df = self.df.ix[:,['Date','Close','SQZ']]
+        self.df = self.df.ix[:,['Date','Open', 'Close','SQZ']]
         try:
             self.df.to_csv("out.csv")
         except:
