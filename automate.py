@@ -15,25 +15,19 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import sqlite3
 
-def get_tickers():
-
-
-    """
+def get_options_tickers():
     page = urllib.request.urlopen("ftp://ftp.nasdaqtrader.com/SymbolDirectory/options.txt")
     df = pd.read_csv(page,sep="|")
 
     dfs = df.groupby('Underlying Symbol')
     tickers = []
     for df in dfs:
-        if len(df[1])>10:
+        if len(df[1])>50:
             tickers.append(df[0])
-    """
-    tickers = pd.read_csv('options_tickers.csv')['Symbol'].tolist()
 
     return tickers
 
-
-class myThread (multiprocessing.Process):
+class stock_analyzer(multiprocessing.Process):
     def __init__(self, ticker_q, return_q):
         multiprocessing.Process.__init__(self)
         self.q = ticker_q
@@ -43,31 +37,55 @@ class myThread (multiprocessing.Process):
         con = sqlite3.connect("trades.sqlite")
 
         while self.q.qsize()>0:
-            (symbol, list_type) = self.q.get()
-            x = stock(symbol).df
+            (symbol, list_type, options) = self.q.get()
 
-            x['listing_type'] = list_type
+            x = stock(symbol, caller='automate').df
+
+            try:
+                if x['Volume'].mean()<100000:  # if volume not high enough, continue
+                    continue
+                days_before = x.iloc[-4:-1]['SQZ'].unique() # prior days must be same
+                if len(days_before) != 1 or len(x.tail())==0:
+                    continue
+            except:
+                continue
 
             day_before = x.iloc[-2:-1]['SQZ'].values[0]
             today = x.iloc[-1:]['SQZ'].values[0]
 
-            if today != day_before and (today == 'maroon' or today =='green'):
-                if today == 'maroon':
-                    play = 'Call'
-                elif today == 'green':
-                    play = 'Put'
-                x = x.ix[:, ['Date', 'listing_type', 'Open', 'SQZ']]
-                x.columns = ['Date', 'Listing Type', 'Open', 'SQZ']
-                message = '\n----------\n' + symbol +"\t" + "Enter " + play + '\n' + str(x.tail(2)) + '\n----------\n'
-                self.return_q.put(str(message))
-                print(message)
-                x['Sell Date'] = None
-                x['Close Price'] = None
-                x['Symbol'] = symbol
-                x['Play'] = play
-                x = x.tail(1)
-                x.to_sql('trades', con, if_exists='append')
+            play = None
+            x['listing_type'] = list_type
+            x['Options'] = options
 
+            if today != day_before and (today == 'maroon' or today =='green'):
+                if today == 'maroon' and list_type != 'channeldown':
+                    play = 'Call'
+                elif today == 'green' and list_type != 'channelup':
+                    play = 'Put'
+
+                if play:    #sometimes play still gets through as none....
+                    x = x.ix[:, ['listing_type', 'Options', 'Open', 'Volume', 'SQZ']]
+                    x.columns = ['Listing Type', 'Options', 'Open', 'Y\'day Vol.', 'SQZ']
+                    message = '\n----------\n' + symbol +"\t" + "Enter " + play + '\n' + str(x.tail(6)) + '\n----------'
+                    print(message)
+                    message = '\n<b>' + symbol +"\t\t\t" + "Enter " + play + '</b>\n' + x.tail(1).to_string(index=False)
+                    self.return_q.put(str(message))
+
+                    x['Sell Date'] = None
+                    x['Close Price'] = None
+                    x['Current Price'] = None
+                    x['Symbol'] = symbol
+                    x['Play'] = play
+                    x = x.tail(1)
+                    x.to_sql('trades', con, if_exists='append')
+
+def get_sp500(ticker_q, options_tickers):
+    df = pd.read_csv('sp500.csv').values
+    for symbol in df:
+        if symbol[0] in options_tickers:
+            ticker_q.put((symbol[0], 'sp500', 'Yes'))
+        else:
+            ticker_q.put((symbol[0], 'sp500', 'No'))
 
 def get_channel_symbols(ticker_q, options_tickers):
     list_types = ['channelup', 'channel' , 'channeldown']
@@ -86,33 +104,15 @@ def get_channel_symbols(ticker_q, options_tickers):
             for ticker in tickers:
                 ticker = str(ticker).replace('quote.ashx?t=','')[2:-2]
                 if ticker in options_tickers:
+                    options = 'Yes'
+                else:
+                    options = 'No'
 
-                    ticker_q.put((ticker, list_type))
-
+                ticker_q.put((ticker, list_type, options))
 
 def send_alert_email(messages):
-
-    message_header = """
-    <p style='font-family: verdana'>
-      This is a beta release of an automated trading system based on a popular momentum indicator. The indicator
-      works by combining two common technical analysis tools and adding linear regression. Alert signals are
-      produced when the indicator switches from lime green to green, or red to maroon.
-      <br>
-      An example of the indicator can be viewed <a href='http://aitrader.net/static/example.png'>here</a>.
-
-    <p style='font-family: verdana'>
-      You do not have to play options to succeed. Back testing revealed a median ROI of 19% and
-      average ROI of 31% for the stock alone. If you only want to play the stock then submit a
-      buy order install of a call; ignore puts.
-
-    <p style='font-family: verdana'>
-      This system is conbined with finviz.com's pattern recognition system to identify stocks that
-      are moving within a certain channel.  If you are playing the options, it is highly recommended
-      to only do calls in channel up stocks and puts in channel down stocks - this will work to your advantage.
-      <br>
-      Listed below are the recommended plays.<br>
-      """
-
+    with open('email_message.txt', 'r') as email_message:
+        message_header=email_message.read().replace('\n', '<br>')
 
     config = configparser.RawConfigParser()
     config.read("credentials.ini")
@@ -123,16 +123,17 @@ def send_alert_email(messages):
     email_addresses = addresses_config['email_addresses']['addresses'].split(',')
     for to_address in email_addresses:
         print('sending email to: ', to_address)
+
         msg = MIMEMultipart('alternative')
         msg['From'] = "bot@aitrader.net"
         msg['To'] = to_address
         msg['Subject'] = "Trade Alerts for %s - AITrader.net (Beta)" % datetime.now().strftime('%m-%d-%Y')
-        text = message_header + messages
-        messages = message_header + messages.replace("\n----------\n", "<p style='font-family:courier;'>----------\n")
-        html = messages.replace("\n", "<br>")
 
+        text = message_header + messages
+        html = message_header + "<p style='font-family:courier;'>" + messages.replace("\n", "<br>")
 
         html = html.replace("  ", "&nbsp;&nbsp;")
+        html = html.replace("\t", "&nbsp;&nbsp;&nbsp;&nbsp;")
 
         msg.attach(MIMEText(text, 'text'))
         msg.attach(MIMEText(html, 'html'))
@@ -146,35 +147,27 @@ def send_alert_email(messages):
         s.sendmail("bot@aitrader.net", to_address, msg.as_string())
 
         s.quit()
-        sleep(1)
-        
-
-
+        sleep(.1)
 
 if __name__ == '__main__':
+    ticker_q = multiprocessing.Queue()      # input queue
+    return_q = multiprocessing.Queue()      # output queue
 
+    options_tickers = get_options_tickers()         # get stocks that have options
+    get_channel_symbols(ticker_q, options_tickers)  # finviz pattern recognition
+    get_sp500(ticker_q, options_tickers)            # get sp500 for testing purposes
 
-
-
-    ticker_q = multiprocessing.Queue()
-    return_q = multiprocessing.Queue()
-
-    options_tickers = get_tickers()
-
-
-    get_channel_symbols(ticker_q, options_tickers)
-
-
-    for i in range(13):
-        thread = myThread(ticker_q, return_q)
+    for i in range(20):
+        thread = stock_analyzer(ticker_q, return_q)
         thread.start()
 
     while ticker_q.qsize()>0:
         sleep(1)
-    sleep(5)
-    messages = ""
+    sleep(25)                               # wait for all workers to complete
+
+    messages = ""                           # concat output together for email
     while return_q.qsize()>0:
         messages = messages + return_q.get()
 
     if messages!="":
-        send_alert_email(messages)
+        send_alert_email(messages)          # send the mail

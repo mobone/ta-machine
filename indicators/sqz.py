@@ -15,20 +15,25 @@ import numpy as np
 import re
 
 class stock():
-    def __init__(self, symbol):
+    def __init__(self, symbol, caller=None):
         self.symbol = symbol
+        self.caller = caller
 
         self.length = 20
         self.mult = 2.0
         self.lengthKC = 20
         self.multKC = 1.5
 
-        self.get_history()
+        try:
+            self.get_history()
 
-        if int(datetime.now().strftime('%H')) < 12:
-            self.get_current_price()
+            if int(datetime.now().strftime('%H')) < 19:
+                self.get_current_price()
+        except Exception as e:
+            print(self.symbol, e)
+            return
+
         self.df = self.df.reset_index(drop=True)
-
 
         self.source = self.df['Close'].values
 
@@ -37,11 +42,20 @@ class stock():
         self.get_SQZ()
 
     def get_history(self):
-        url = "http://chart.finance.yahoo.com/table.csv?s=%s&a=2&b=1&c=2016&d=10&e=8&f=2020&g=d&ignore=.csv" % self.symbol
-        df = pd.read_csv(url)
-        self.df = df.iloc[::-1]
+        if self.caller=='automate':
+            url = "http://chart.finance.yahoo.com/table.csv?s=%s&a=8&b=1&c=2016&d=10&e=8&f=2020&g=d&ignore=.csv" % self.symbol
+        else:
+            url = "http://chart.finance.yahoo.com/table.csv?s=%s&a=2&b=1&c=2016&d=10&e=8&f=2020&g=d&ignore=.csv" % self.symbol
+        try:
+            df = pd.read_csv(url)
+            self.df = df.iloc[::-1]
 
-        self.df = self.df.ix[:,["Date","High", "Low", "Open", "Close"]]
+            self.df = self.df.ix[:,["Date","High", "Low", "Open", "Volume", "Close"]]
+            self.last_day_volume = self.df.tail(1)['Volume'].values[0]
+
+        except Exception as e:
+            print(e)
+
 
 
 
@@ -54,11 +68,20 @@ class stock():
         #match = re.search( b'regularMarketPrice":{"raw":[0-9]*\.[0-9]', html_text, re.M|re.I).group()
 
         cur_price = float(str(matches[len(matches)-1]).split("raw\":")[1].replace("'",""))
-
         cur_date = datetime.now().strftime("%Y-%m-%d")
-
         # todo, update with high and low aswell
-        self.df = self.df.append(pd.DataFrame([{"Date": cur_date, "Close": cur_price, "Low": cur_price,  "High": cur_price}]))
+        self.df = self.df.append(pd.DataFrame([{
+            "Date": cur_date,
+            "Open": cur_price,
+            "Close": cur_price,
+            "Low": cur_price,
+            "High": cur_price,
+            "Volume": self.last_day_volume}]))
+
+
+
+
+
 
     def get_BB(self):
         basis = ta.SMA(self.source, timeperiod=self.length)
@@ -91,7 +114,8 @@ class stock():
 
         self.df['lazy_bear_mean'] = self.source - y_mean_list
 
-        self.df = self.df.dropna()
+        self.df = self.df.dropna(subset=['upperBB'])
+
         result_list = []
         cur_coef = None
         for i in self.df.iterrows():
@@ -125,11 +149,4 @@ class stock():
         self.df = self.df[self.lengthKC+1:]
         self.df['SQZ'] = result_list
 
-
-
-
-        self.df = self.df.ix[:,['Date','Open', 'Close','SQZ']]
-        try:
-            self.df.to_csv("out.csv")
-        except:
-            pass
+        self.df = self.df.ix[:,['Date','Open', 'Close','Volume', 'SQZ']]

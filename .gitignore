@@ -49,3 +49,4 @@ Temporary Items
 credentials.ini
 email_members.ini
 *.sqlite
+*.csv

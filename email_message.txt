@@ -1,0 +1,12 @@
+<p style='font-family: verdana'>
+  This is a beta release of an automated trading system based on a popular momentum indicator. The indicator  works by combining two common technical analysis tools and adding linear regression. Alert signals are produced when the indicator switches from lime green to green, or red to maroon.
+
+  An example of the indicator can be viewed <a href='http://aitrader.net/static/example.png'>here</a>.
+<p style='font-family: verdana'>
+  This system is combined with finviz.com's pattern recognition system to identify stocks that are moving within a certain channel.  If you are playing the options, know that this system will only recommend calls in companies not in a down channel and puts in those not in an up channel. For stock plays it is recommended to only buy those that are not in a down channel.
+<p style='font-family: verdana'>
+  You do not have to play options to succeed. Back testing of the last six months revealed a median ROI of 15% and  average ROI of 30% for stock trades alone (before commission fees). If you only want to play the stock then submit a buy order instead of a call option; ignore put options.
+
+  <b>It is recommended that you stick to plays within channels.</b> The S&P plays are listed for testing purposes.
+
+  Listed below are the recommended plays.
