@@ -3,10 +3,10 @@
 
  An example of the indicator can be viewed <a href='http://aitrader.net/static/example.png'>here</a>.
 <p style='font-family: verdana'>
- This system is combined with finviz.com's pattern recognition system to identify stocks that are moving within a certain channel. If you are playing the options, know that this system will only recommend calls in companies not in a down channel and puts in those not in an up channel. For stock plays it is recommended to only buy those that are not in a down channel.
+ This system is combined with finviz.com's pattern recognition system to identify stocks that are moving within a certain channel. Stocks that are bouncing between two prices within a channel are better suited for this indicator.
 <p style='font-family: verdana'>
- You do not have to play options to succeed. Back testing of the last six months revealed a median ROI of 15% and average ROI of 30% for stock trades alone (before commission fees). If you only want to play the stock then submit a buy order instead of a call option; ignore put options.
+ Back testing of the last six months revealed a median ROI of 18% and average ROI of 32% (before commission fees). Keep in mind, however, we did not know back then that these stocks would be within a channel at that time. We are assuming those within a channel will stay within a channel. This is reinforced by traders that participate in price manipulation.
 
- <b>It is recommended that you stick to plays within channels.</b> The S&P plays are listed for testing purposes.
+ <b>It is recommended that you stick to plays within channels.</b> The S&P plays are listed for testing purposes. This system is still very much in beta and will change, but the indicator is pretty much set in stone. Any trades you make are your own; I am not liable for any losses.
 
  Listed below are the recommended plays.<br>

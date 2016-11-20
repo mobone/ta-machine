@@ -119,7 +119,6 @@ def get_channel_symbols(ticker_q):
 
             for ticker in tickers:
                 ticker = str(ticker).replace('quote.ashx?t=','')[2:-2]
-                print(ticker, list_type)
                 ticker_q.put((ticker, list_type))
 
 def get_html_table(messages):
@@ -166,7 +165,7 @@ def send_alert_email(messages):
     table = get_html_table(messages)
 
     with open('email_message.txt', 'r') as email_message:
-        message_header=email_message.read().replace('\n', '<br>')
+        message_header=email_message.read()
 
     config = configparser.RawConfigParser()
     config.read("credentials.ini")
