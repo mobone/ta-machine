@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import datetime, timedelta, time
 import calendar
 import multiprocessing
-import requests
+import requests as r
 import re
 import urllib
 import email
@@ -14,18 +14,13 @@ from time import sleep
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import sqlite3
+import warnings
+import requests_cache
 
-def get_options_tickers():
-    page = urllib.request.urlopen("ftp://ftp.nasdaqtrader.com/SymbolDirectory/options.txt")
-    df = pd.read_csv(page,sep="|")
+requests_cache.install_cache('request_cache')
 
-    dfs = df.groupby('Underlying Symbol')
-    tickers = []
-    for df in dfs:
-        if len(df[1])>50:
-            tickers.append(df[0])
-
-    return tickers
+warnings.filterwarnings('ignore')
+pd.set_option('max_colwidth',120)
 
 class stock_analyzer(multiprocessing.Process):
     def __init__(self, ticker_q, return_q):
@@ -35,9 +30,11 @@ class stock_analyzer(multiprocessing.Process):
 
     def run(self):
         con = sqlite3.connect("trades.sqlite")
+        pd.set_option('max_colwidth',120)
+        pd.set_option('precision',2)
 
         while self.q.qsize()>0:
-            (symbol, list_type, options) = self.q.get()
+            (symbol, list_type) = self.q.get()
 
             x = stock(symbol, caller='automate').df
 
@@ -54,63 +51,120 @@ class stock_analyzer(multiprocessing.Process):
             today = x.iloc[-1:]['SQZ'].values[0]
 
             play = None
-            x['listing_type'] = list_type
-            x['Options'] = options
+            x['Listing Type'] = list_type
 
-            if today != day_before and (today == 'maroon' or today =='green'):
-                if today == 'maroon' and list_type != 'channeldown':
-                    play = 'Call'
-                elif today == 'green' and list_type != 'channelup':
-                    play = 'Put'
+            if today != day_before and today == 'maroon':
+                if today == 'maroon':
+                    play = 'Buy'
 
                 if play:    #sometimes play still gets through as none....
-                    x = x.ix[:, ['listing_type', 'Options', 'Open', 'Volume', 'SQZ']]
-                    x.columns = ['Listing Type', 'Options', 'Open', 'Y\'day Vol.', 'SQZ']
-                    message = '\n----------\n' + symbol +"\t" + "Enter " + play + '\n' + str(x.tail(6)) + '\n----------'
-                    print(message)
-                    message = '\n<b>' + symbol +"\t\t\t" + "Enter " + play + '</b>\n' + x.tail(1).to_string(index=False)
-                    self.return_q.put(str(message))
+                    x = x.ix[:, ['Listing Type', 'Open', 'Volume', 'SQZ']]
 
+                    x['Symbol'] = symbol
+                    x['Play'] = play
+
+                    x['FinViz Chart'] = 'View Chart'
+                    x = x.ix[:, ['Symbol', 'Play', 'Listing Type', 'FinViz Chart', 'Open', 'Volume']]
+                    x['Open'] = x['Open'].round(2)
+
+                    fundamentals_df = self.get_fundamentals(symbol)
+                    fundamentals_columns = ['Beta', 'P/E', 'EPS Q/Q', 'Quick Ratio', 'Short Ratio']
+                    for col in fundamentals_columns:
+                        x[col] = fundamentals_df[col]['value']
+
+                    print(x.tail(1))
+                    self.return_q.put(x.tail(1))
+                    del x['FinViz Chart']
+
+                    x['Buy Date'] = datetime.now().strftime('%m-%d-%Y')
                     x['Sell Date'] = None
                     x['Close Price'] = None
                     x['Current Price'] = None
-                    x['Symbol'] = symbol
-                    x['Play'] = play
-                    x = x.tail(1)
-                    x.to_sql('trades', con, if_exists='append')
 
-def get_sp500(ticker_q, options_tickers):
+
+
+                    x = x.tail(1)
+                    x.to_sql('trades_v2', con, if_exists='append')
+
+    def get_fundamentals(self, symbol):
+        url = "http://finviz.com/quote.ashx?t=%s" % symbol
+        html_text = r.get(url).text.encode('UTF-8')
+        dfs = pd.read_html(html_text)
+        df = dfs[7]
+        df = pd.DataFrame(df.values.reshape(-1, 2), columns=['key', 'value'])
+        df = df.set_index('key').T
+
+        return df
+
+
+
+def get_sp500(ticker_q, ):
     df = pd.read_csv('sp500.csv').values
     for symbol in df:
-        if symbol[0] in options_tickers:
-            ticker_q.put((symbol[0], 'sp500', 'Yes'))
-        else:
-            ticker_q.put((symbol[0], 'sp500', 'No'))
+        ticker_q.put((symbol[0], 'sp500'))
 
-def get_channel_symbols(ticker_q, options_tickers):
-    list_types = ['channelup', 'channel' , 'channeldown']
+def get_channel_symbols(ticker_q):
+    list_types = ['channelup', 'channel']
     for list_type in list_types:
         url = "http://finviz.com/screener.ashx?v=210&s=ta_p_%s" % list_type
-        html_text = requests.get(url).text.encode('UTF-8')
+        html_text = r.get(url).text.encode('UTF-8')
 
         matchObj = re.search( b'Page 1\/[0-9]*', html_text, re.M|re.I)
         pages = str(matchObj.group()).split('/')[1].replace("'",'')
 
         for i in range(int(pages)):
             url = "http://finviz.com/screener.ashx?v=210&s=ta_p_%s&r=%s" % (list_type, 1+(20*i))
-            html_text = requests.get(url).text.encode('UTF-8')
+            html_text = r.get(url).text.encode('UTF-8')
             tickers = re.findall(b"quote\.ashx\?t=[A-Z]*\&", html_text)
 
             for ticker in tickers:
                 ticker = str(ticker).replace('quote.ashx?t=','')[2:-2]
-                if ticker in options_tickers:
-                    options = 'Yes'
-                else:
-                    options = 'No'
+                print(ticker, list_type)
+                ticker_q.put((ticker, list_type))
 
-                ticker_q.put((ticker, list_type, options))
+def get_html_table(messages):
+    table = "<table>"
+    for i in messages:
+        print(i)
+
+    for i in range(len(messages[0].columns)):
+        table = table + "<col width='90'>"
+
+    table = table + "<tr>"
+    for column in messages[0].columns.values:
+        table = table + "<th>" + column + "</th>"
+    table = table + "</tr>"
+
+
+
+    for message in messages:
+        symbol = message['Symbol'].values[0]
+
+        table = table + "<tr>"
+        for item in message.values[0]:
+            tr = ""
+            if item == 'View Chart':
+                tr = tr + "<td style='text-align: center'><a href='http://finviz.com/chart.ashx?t=%s&ta=1&p=d&s=l'>View Chart</a></td>" % (symbol)
+            elif type(item) == float:
+                tr = tr + "<td style='text-align: right'>{0:.2f}</td>".format(item)
+            elif type(item) == int:
+                tr = tr + "<td style='text-align: right'>{:,d}</td>".format(item)
+            elif item == symbol:
+                tr = tr + "<td style='text-align: center'><a href='https://finance.yahoo.com/quote/%s'>%s</a></td>" % (symbol, symbol)
+            else:
+                tr = tr + "<td style='text-align: center'>"+str(item)+"</td>"
+            table = table + tr
+
+
+        table = table + "</tr>\n"
+
+    table = table + "</table>"
+    return table
 
 def send_alert_email(messages):
+    # generate table
+    table = get_html_table(messages)
+
     with open('email_message.txt', 'r') as email_message:
         message_header=email_message.read().replace('\n', '<br>')
 
@@ -129,13 +183,8 @@ def send_alert_email(messages):
         msg['To'] = to_address
         msg['Subject'] = "Trade Alerts for %s - AITrader.net (Beta)" % datetime.now().strftime('%m-%d-%Y')
 
-        text = message_header + messages
-        html = message_header + "<p style='font-family:courier;'>" + messages.replace("\n", "<br>")
+        html = message_header + table
 
-        html = html.replace("  ", "&nbsp;&nbsp;")
-        html = html.replace("\t", "&nbsp;&nbsp;&nbsp;&nbsp;")
-
-        msg.attach(MIMEText(text, 'text'))
         msg.attach(MIMEText(html, 'html'))
 
         s = smtplib.SMTP("smtp-mail.outlook.com",587)
@@ -149,25 +198,28 @@ def send_alert_email(messages):
         s.quit()
         sleep(.1)
 
+        input()
+
+
 if __name__ == '__main__':
     ticker_q = multiprocessing.Queue()      # input queue
     return_q = multiprocessing.Queue()      # output queue
 
-    options_tickers = get_options_tickers()         # get stocks that have options
-    get_channel_symbols(ticker_q, options_tickers)  # finviz pattern recognition
-    get_sp500(ticker_q, options_tickers)            # get sp500 for testing purposes
+    get_channel_symbols(ticker_q)  # finviz pattern recognition
+    get_sp500(ticker_q)            # get sp500 for testing purposes
 
-    for i in range(20):
+    for i in range(15):
         thread = stock_analyzer(ticker_q, return_q)
         thread.start()
 
     while ticker_q.qsize()>0:
         sleep(1)
-    sleep(25)                               # wait for all workers to complete
+    print("Work queue complete")
+    sleep(15)                                # wait for all workers to complete
 
-    messages = ""                           # concat output together for email
+    plays_list = []                        # concat output together for email
     while return_q.qsize()>0:
-        messages = messages + return_q.get()
+        plays_list.append(return_q.get())
 
-    if messages!="":
-        send_alert_email(messages)          # send the mail
+    if len(plays_list)>0:
+        send_alert_email(plays_list)          # send the mail

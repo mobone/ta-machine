@@ -15,9 +15,10 @@ tickers = pd.read_csv('trader_input.csv')
 total_trades_df = []
 
 for i in tickers.iterrows():
+
     symbol = i[1]['Symbol']
     list_type = i[1]['list_type']
-    
+
     df = stock(symbol).df
 
     pd.set_option('display.max_rows', len(df))
@@ -34,8 +35,7 @@ for i in tickers.iterrows():
     for i in range(df.index[0]+5,df.tail(1).index[0]):
         # previous days must all be the same
         before_turn = df.loc[i-3:i-1]['SQZ']
-        print(before_turn)
-        input()
+
         # recent two days must be the same
         #after_turn = df.loc[i-1:i]['SQZ']
 
@@ -67,7 +67,7 @@ for i in tickers.iterrows():
         df.ix[i,'Trade'] = trade
         prev_trade = trade
 
-    if len(trades_df)<3:
+    if len(trades_df)<2:
         continue
     # get ROI
     trades_df['Stock_ROI'] = (trades_df['Stock_Close']-trades_df['Stock_Open']) / trades_df['Stock_Open']

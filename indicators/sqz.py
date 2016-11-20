@@ -56,18 +56,15 @@ class stock():
         except Exception as e:
             print(e)
 
-
-
-
-
     def get_current_price(self):
-        url = "http://finance.yahoo.com/quote/%s" % self.symbol
-        html_text = r.get(url).text.encode('utf-8')
-        p = re.compile(b'regularMarketPrice":{"raw":[0-9]*\.[0-9]')
-        matches = p.findall(html_text)
-        #match = re.search( b'regularMarketPrice":{"raw":[0-9]*\.[0-9]', html_text, re.M|re.I).group()
+        url = "http://finviz.com/quote.ashx?t=%s" % self.symbol
+        html_text = r.get(url).text.encode('UTF-8')
+        dfs = pd.read_html(html_text)
+        df = dfs[7]
+        df = pd.DataFrame(df.values.reshape(-1, 2), columns=['key', 'value'])
+        df = df.set_index('key').T
+        cur_price = float(df['Price']['value'])
 
-        cur_price = float(str(matches[len(matches)-1]).split("raw\":")[1].replace("'",""))
         cur_date = datetime.now().strftime("%Y-%m-%d")
         # todo, update with high and low aswell
         self.df = self.df.append(pd.DataFrame([{
