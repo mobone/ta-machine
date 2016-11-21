@@ -28,7 +28,7 @@ def send_to_db(symbol, trade_date, price):
 
 con = sqlite3.connect("trades.sqlite")
 c = con.cursor()
-trades_df = pd.read_sql("select Symbol,`Buy Date` from trades where `Close Price` is null and `Play` = 'Enter Call';", con)
+trades_df = pd.read_sql("select Symbol,`Buy Date` from trades_v2 where `Close Price` is null and `Play` = 'Enter Call';", con)
 
 for i in trades_df.iterrows():
     print(i[1])

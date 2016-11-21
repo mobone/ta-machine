@@ -6,7 +6,9 @@
  This system is combined with finviz.com's pattern recognition system to identify stocks that are moving within a certain channel. Stocks that are bouncing between two prices within a channel are better suited for this indicator.
 <p style='font-family: verdana'>
  Back testing of the last six months revealed a median ROI of 18% and average ROI of 32% (before commission fees). Keep in mind, however, we did not know back then that these stocks would be within a channel at that time. We are assuming those within a channel will stay within a channel. This is reinforced by traders that participate in price manipulation.
-
- <b>It is recommended that you stick to plays within channels.</b> The S&P plays are listed for testing purposes. This system is still very much in beta and will change, but the indicator is pretty much set in stone. Any trades you make are your own; I am not liable for any losses.
-
+<p style='font-family: verdana'>
+ <b>It is recommended that you stick to plays within channels.</b> The S&P plays are listed for testing purposes.
+<p style='font-family: verdana'>
+ This system is still very much in beta and will change, but the indicator is pretty much set in stone. Any trades you make are your own; I am not liable for any losses.
+<p style='font-family: verdana'>
  Listed below are the recommended plays.<br>

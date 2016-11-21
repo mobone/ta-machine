@@ -17,7 +17,7 @@ import sqlite3
 import warnings
 import requests_cache
 
-requests_cache.install_cache('request_cache')
+#requests_cache.install_cache('request_cache')
 
 warnings.filterwarnings('ignore')
 pd.set_option('max_colwidth',120)
@@ -28,8 +28,12 @@ class stock_analyzer(multiprocessing.Process):
         self.q = ticker_q
         self.return_q = return_q
 
+
+
     def run(self):
-        con = sqlite3.connect("trades.sqlite")
+        self.con = sqlite3.connect("trades.sqlite")
+        self.current_trades = self.get_current_trades()
+
         pd.set_option('max_colwidth',120)
         pd.set_option('precision',2)
 
@@ -37,11 +41,14 @@ class stock_analyzer(multiprocessing.Process):
             (symbol, list_type) = self.q.get()
 
             x = stock(symbol, caller='automate').df
+            play = None
 
             try:
-                if x['Volume'].mean()<100000:  # if volume not high enough, continue
+                if x['Volume'].mean()<100000:               # if volume not high enough, continue
                     continue
+
                 days_before = x.iloc[-4:-1]['SQZ'].unique() # prior days must be same
+
                 if len(days_before) != 1 or len(x.tail())==0:
                     continue
             except:
@@ -50,53 +57,78 @@ class stock_analyzer(multiprocessing.Process):
             day_before = x.iloc[-2:-1]['SQZ'].values[0]
             today = x.iloc[-1:]['SQZ'].values[0]
 
-            play = None
-            x['Listing Type'] = list_type
-
+            play = None                                     # check for buy and sell signals
             if today != day_before and today == 'maroon':
-                if today == 'maroon':
-                    play = 'Buy'
-
-                if play:    #sometimes play still gets through as none....
-                    x = x.ix[:, ['Listing Type', 'Open', 'Volume', 'SQZ']]
-
-                    x['Symbol'] = symbol
-                    x['Play'] = play
-
-                    x['FinViz Chart'] = 'View Chart'
-                    x = x.ix[:, ['Symbol', 'Play', 'Listing Type', 'FinViz Chart', 'Open', 'Volume']]
-                    x['Open'] = x['Open'].round(2)
-
-                    fundamentals_df = self.get_fundamentals(symbol)
-                    fundamentals_columns = ['Beta', 'P/E', 'EPS Q/Q', 'Quick Ratio', 'Short Ratio']
-                    for col in fundamentals_columns:
-                        x[col] = fundamentals_df[col]['value']
-
-                    print(x.tail(1))
-                    self.return_q.put(x.tail(1))
-                    del x['FinViz Chart']
-
-                    x['Buy Date'] = datetime.now().strftime('%m-%d-%Y')
-                    x['Sell Date'] = None
-                    x['Close Price'] = None
-                    x['Current Price'] = None
+                play = "Buy"
+            if today != day_before and today == "green" and symbol in self.current_trades:
+                play = "Sell"
 
 
+            if play is not None:
+                x = x.ix[:, ['Open', 'Volume', 'SQZ']]
 
-                    x = x.tail(1)
-                    x.to_sql('trades_v2', con, if_exists='append')
+                x['Symbol'] = symbol
+                x['Play'] = play
+                x['Listing Type'] = list_type
+
+                x = x.ix[:, ['Symbol', 'Play', 'Listing Type', 'Open', 'Volume']]
+
+                (exchange, fundamentals_df) = self.get_fundamentals(symbol)
+                x['FinViz Chart'] = 'View Chart'
+                x['TradingView Chart'] = exchange
+
+                fundamentals_columns = ['Beta', 'P/E', 'EPS Q/Q', 'Quick Ratio', 'Short Ratio']
+                for col in fundamentals_columns:
+                    x[col] = fundamentals_df[col]['value']
+
+                x = x.tail(1)
+                print(x)
+                self.return_q.put(x)
+
+                del x['FinViz Chart']
+                del x['TradingView Chart']
+                del x['Play']
+
+                x['Buy Date'] = datetime.now().strftime('%m-%d-%Y')
+                x['Sell Date'] = None
+                x['Close Price'] = None
+                x['Current Price'] = None
+
+                # store buys and sells
+                if play == "Buy":    
+                    x.to_sql('trades_v2', self.con, if_exists='append')
+                elif play == "Sell":
+                    c = self.con.cursor()
+                    sql = """update trades_v2 set
+                        `Sell Date` = '%s',
+                        `Close Price` = %s where
+                        Symbol = '%s' and `Sell Date` is null""" % (datetime.now().strftime("%m-%d-%Y"), x['Open'].values[0], symbol)
+                    print(sql)
+                    c.execute(sql)
+                    self.con.commit()
+
+    def get_current_trades(self):
+        sql = "select * from trades_v2 where `Sell Date` is null";
+        df = pd.read_sql(sql, self.con)
+
+        return df['Symbol'].values
+
 
     def get_fundamentals(self, symbol):
         url = "http://finviz.com/quote.ashx?t=%s" % symbol
         html_text = r.get(url).text.encode('UTF-8')
+
+        # get exchange
+        exchange_key = re.findall(b"finance\?q=[A-Z:]*", html_text)
+        exchange = exchange_key[0].decode("utf-8").replace("finance?q=","")
+
+        # get fundamentals_df
         dfs = pd.read_html(html_text)
         df = dfs[7]
         df = pd.DataFrame(df.values.reshape(-1, 2), columns=['key', 'value'])
         df = df.set_index('key').T
 
-        return df
-
-
+        return (exchange, df)
 
 def get_sp500(ticker_q, ):
     df = pd.read_csv('sp500.csv').values
@@ -127,14 +159,12 @@ def get_html_table(messages):
         print(i)
 
     for i in range(len(messages[0].columns)):
-        table = table + "<col width='90'>"
+        table = table + "<col width='85'>"
 
     table = table + "<tr>"
     for column in messages[0].columns.values:
         table = table + "<th>" + column + "</th>"
     table = table + "</tr>"
-
-
 
     for message in messages:
         symbol = message['Symbol'].values[0]
@@ -150,6 +180,10 @@ def get_html_table(messages):
                 tr = tr + "<td style='text-align: right'>{:,d}</td>".format(item)
             elif item == symbol:
                 tr = tr + "<td style='text-align: center'><a href='https://finance.yahoo.com/quote/%s'>%s</a></td>" % (symbol, symbol)
+            elif ":" in item and symbol in item:
+                tr = tr + "<td style='text-align: center'><a href='https://www.tradingview.com/chart/?symbol=%s'>View Chart</a></td>" % (item)
+            elif item == "Sell":
+                tr = tr + "<td style='text-align: center'><b>"+str(item)+"</b></td>"
             else:
                 tr = tr + "<td style='text-align: center'>"+str(item)+"</td>"
             table = table + tr
@@ -196,8 +230,6 @@ def send_alert_email(messages):
 
         s.quit()
         sleep(.1)
-
-        input()
 
 
 if __name__ == '__main__':
