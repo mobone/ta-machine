@@ -12,7 +12,7 @@ def get_current_price(symbol):
     d1 = pd.DataFrame(df.values.reshape(-1, 2), columns=['key', 'value'])
     d1 = d1.set_index('key').T
     print(d1)
-    input()
+
     cur_price = d1['Price']['value']
 
 
@@ -20,15 +20,15 @@ def get_current_price(symbol):
 
 def send_to_db(symbol, trade_date, price):
     sql = "update trades set `Current Price` = %s where Symbol = '%s' and `Buy Date` = '%s'" % (price, symbol, trade_date)
+    sql = "update trades_v2 set `Current Price` = %s where Symbol = '%s' and `Buy Date` = '%s'" % (price, symbol, trade_date)
     print(sql)
-
-
     c.execute(sql)
     con.commit()
 
 con = sqlite3.connect("trades.sqlite")
 c = con.cursor()
-trades_df = pd.read_sql("select Symbol,`Buy Date` from trades_v2 where `Close Price` is null and `Play` = 'Enter Call';", con)
+trades_df = pd.read_sql("select Symbol,`Buy Date` from trades where `Close Price` is null and `Play` = 'Enter Call';", con)
+trades_df = pd.read_sql("select Symbol,`Buy Date` from trades_v2 where `Close Price` is null and `Sell Date` is null;", con)
 
 for i in trades_df.iterrows():
     print(i[1])

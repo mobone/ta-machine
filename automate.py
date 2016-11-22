@@ -41,78 +41,136 @@ class stock_analyzer(multiprocessing.Process):
             (symbol, list_type) = self.q.get()
 
             x = stock(symbol, caller='automate').df
-            play = None
 
-            try:
-                if x['Volume'].mean()<100000:               # if volume not high enough, continue
-                    continue
-
-                days_before = x.iloc[-4:-1]['SQZ'].unique() # prior days must be same
-
-                if len(days_before) != 1 or len(x.tail())==0:
-                    continue
-            except:
+            optimize_check = self.optimize_filter(x)                    # meet certain conditions to be
+            if optimize_check == -1:                                    # considered for play
                 continue
 
-            day_before = x.iloc[-2:-1]['SQZ'].values[0]
-            today = x.iloc[-1:]['SQZ'].values[0]
-
-            play = None                                     # check for buy and sell signals
-            if today != day_before and today == 'maroon':
-                play = "Buy"
-            if today != day_before and today == "green" and symbol in self.current_trades:
-                play = "Sell"
-
+            play = self.get_play(x, symbol)                             # check for buy and sell signals
 
             if play is not None:
-                x = x.ix[:, ['Open', 'Volume', 'SQZ']]
+                x = self.format_output(x, symbol, list_type, play)      # format output for email
 
-                x['Symbol'] = symbol
-                x['Play'] = play
-                x['Listing Type'] = list_type
-
-                x = x.ix[:, ['Symbol', 'Play', 'Listing Type', 'Open', 'Volume']]
-
-                (exchange, fundamentals_df) = self.get_fundamentals(symbol)
-                x['FinViz Chart'] = 'View Chart'
-                x['TradingView Chart'] = exchange
-
-                fundamentals_columns = ['Beta', 'P/E', 'EPS Q/Q', 'Quick Ratio', 'Short Ratio']
-                for col in fundamentals_columns:
-                    x[col] = fundamentals_df[col]['value']
-
-                x = x.tail(1)
                 print(x)
-                self.return_q.put(x)
+                self.return_q.put(x)                                    # add to queue for email
 
-                del x['FinViz Chart']
-                del x['TradingView Chart']
-                del x['Play']
+                self.store_play(x, play)                                # store buys and sells
 
-                x['Buy Date'] = datetime.now().strftime('%m-%d-%Y')
-                x['Sell Date'] = None
-                x['Close Price'] = None
-                x['Current Price'] = None
 
-                # store buys and sells
-                if play == "Buy":    
-                    x.to_sql('trades_v2', self.con, if_exists='append')
-                elif play == "Sell":
-                    c = self.con.cursor()
-                    sql = """update trades_v2 set
-                        `Sell Date` = '%s',
-                        `Close Price` = %s where
-                        Symbol = '%s' and `Sell Date` is null""" % (datetime.now().strftime("%m-%d-%Y"), x['Open'].values[0], symbol)
-                    print(sql)
-                    c.execute(sql)
-                    self.con.commit()
+
+    def optimize_filter(self, x):
+        try:
+            optimize_check = 1
+            if x['Volume'].mean()<100000:                               # if volume not high enough, continue
+                optimize_check = -1
+                                                                        # if coef not high enough
+            if x.iloc[-1:]['COEF'].values[0]<0.15 and x.iloc[-1:]['COEF'].values[0]>-0.15:
+                optimize_check = -1
+
+            days_before = x.iloc[-4:-1]['SQZ'].unique()                 # prior days must be same
+
+            if len(days_before) != 1 or len(x.tail())==0:
+                optimize_check = -1
+        except Exception as e:
+            print(e)
+            optimize_check = -1
+        return optimize_check
+
+
+    def store_play(self, x, play):
+        x = x.copy(deep=True)
+        del x['Play']
+        del x['FinViz Chart']
+        del x['TradingView Chart']
+
+        x['Buy Date'] = datetime.now().strftime('%m-%d-%Y')
+        x['Sell Date'] = None
+        x['Close Price'] = None
+        x['Current Price'] = None
+
+        if play == "Buy":
+            # check if already bought
+            x.to_sql('trades_v2', self.con, if_exists='append', index=False)
+        elif play == "Sell":
+            c = self.con.cursor()
+            sql = """update trades_v2 set
+                `Sell Date` = '%s',
+                `Close Price` = %s where
+                Symbol = '%s' and `Sell Date` is null""" % (datetime.now().strftime("%m-%d-%Y"), x['Open'].values[0], symbol)
+            print(sql)
+            try:
+                c.execute(sql)
+                self.con.commit()
+            except:
+                pass
+
+    def get_play(self, x, symbol):
+        day_before = x.iloc[-2:-1]['SQZ'].values[0]
+        today = x.iloc[-1:]['SQZ'].values[0]
+
+        play = None
+        if today != day_before and today == 'maroon':
+            play = "Buy"
+        if today != day_before and today == "green" and symbol in self.current_trades:
+            play = "Sell"
+        return play
+
+    def get_dividends(self, symbol):
+
+        one_year_ago = (datetime.now()-timedelta(days=365)).strftime("%Y-%m-%d")
+
+
+        url = "http://www.nasdaq.com/symbol/%s/dividend-history" % symbol
+        html_text = r.get(url).text.encode('UTF-8')
+        dividend_df = pd.read_html(html_text)[5]
+
+        if 'Payment Date' not in dividend_df.keys():
+            return "0/4"
+
+        dividend_df = dividend_df[dividend_df['Payment Date'] != '--']
+        dividend_df['Payment Date'] = pd.to_datetime(dividend_df['Payment Date'], format = '%m/%d/%Y')
+        dividend_df = dividend_df[dividend_df['Payment Date'] > one_year_ago]
+
+        if len(dividend_df)>5:
+            dividend_ratio = str(len(dividend_df))+"/12"
+        elif len(dividend_df)==5:                                     # hack for some stocks returning 5 dividends
+            dividend_ratio = "4/4"
+        else:
+            dividend_ratio = str(len(dividend_df))+"/4"
+
+        return dividend_ratio
+
+    def format_output(self, x, symbol, list_type, play):
+        x['Symbol'] = symbol
+        x['Listing Type'] = list_type
+        x['Play'] = play
+        x = x.ix[:, ['Symbol', 'Play', 'Listing Type', 'Open', 'Volume']]
+
+
+
+        # get other fundamentals info
+        (exchange, fundamentals_df) = self.get_fundamentals(symbol)
+        x['FinViz Chart'] = 'View Chart'
+        x['TradingView Chart'] = exchange
+
+        fundamentals_columns = ['Beta', 'P/E', 'EPS Q/Q', 'Quick Ratio', 'Short Ratio', 'Dividend %']
+        for col in fundamentals_columns:
+            x[col] = fundamentals_df[col]['value']
+
+        # get dividend info
+        dividend_ratio = self.get_dividends(symbol)
+
+        x['Div. in Last YR.'] =  dividend_ratio
+        x = x.tail(1)
+        return x
 
     def get_current_trades(self):
-        sql = "select * from trades_v2 where `Sell Date` is null";
-        df = pd.read_sql(sql, self.con)
-
-        return df['Symbol'].values
-
+        try:
+            sql = "select * from trades_v2 where `Sell Date` is null";
+            df = pd.read_sql(sql, self.con)
+            return df['Symbol'].values
+        except:
+            return []
 
     def get_fundamentals(self, symbol):
         url = "http://finviz.com/quote.ashx?t=%s" % symbol
@@ -130,12 +188,36 @@ class stock_analyzer(multiprocessing.Process):
 
         return (exchange, df)
 
-def get_sp500(ticker_q, ):
-    df = pd.read_csv('sp500.csv').values
-    for symbol in df:
-        ticker_q.put((symbol[0], 'sp500'))
 
-def get_channel_symbols(ticker_q):
+def get_current_trades(ticker_list):
+    con = sqlite3.connect("trades.sqlite")
+    try:
+        sql = "select Symbol,`Listing Type` from trades_v2 where `Sell Date` is null";
+        df = pd.read_sql(sql, con)
+    except Exception as e:
+        print(e)
+        return ticker_list
+
+    for i in df.values:
+        symbol = i[0]
+        find_item = [item for item in ticker_list if symbol in item]
+
+        if len(find_item)==0:
+            ticker_list.append(i)
+
+    return ticker_list
+
+def get_sp500(ticker_list):
+    df = pd.read_csv('sp500.csv').values
+
+    for symbol in df:
+        find_item = [item for item in ticker_list if symbol in item]
+        if len(find_item)==0:
+            ticker_list.append([symbol[0], 'sp500'])
+
+    return ticker_list
+
+def get_channel_symbols(ticker_list):
     list_types = ['channelup', 'channel']
     for list_type in list_types:
         url = "http://finviz.com/screener.ashx?v=210&s=ta_p_%s" % list_type
@@ -151,7 +233,9 @@ def get_channel_symbols(ticker_q):
 
             for ticker in tickers:
                 ticker = str(ticker).replace('quote.ashx?t=','')[2:-2]
-                ticker_q.put((ticker, list_type))
+                ticker_list.append([ticker, list_type])
+
+    return ticker_list
 
 def get_html_table(messages):
     table = "<table>"
@@ -159,11 +243,11 @@ def get_html_table(messages):
         print(i)
 
     for i in range(len(messages[0].columns)):
-        table = table + "<col width='85'>"
+        table = table + "<col>"
 
     table = table + "<tr>"
     for column in messages[0].columns.values:
-        table = table + "<th>" + column + "</th>"
+        table = table + "<th style = 'background-color: #0099CC; color: white; padding: 5px;'>" + column + "</th>"
     table = table + "</tr>"
 
     for message in messages:
@@ -173,19 +257,19 @@ def get_html_table(messages):
         for item in message.values[0]:
             tr = ""
             if item == 'View Chart':
-                tr = tr + "<td style='text-align: center'><a href='http://finviz.com/chart.ashx?t=%s&ta=1&p=d&s=l'>View Chart</a></td>" % (symbol)
+                tr = tr + "<td style='text-align: center; padding: 5px;border-bottom: 1px solid #ddd;'><a href='http://finviz.com/chart.ashx?t=%s&ta=1&p=d&s=l'>View Chart</a></td>" % (symbol)
             elif type(item) == float:
-                tr = tr + "<td style='text-align: right'>{0:.2f}</td>".format(item)
+                tr = tr + "<td style='text-align: right; padding: 5px;border-bottom: 1px solid #ddd;'>{0:.2f}</td>".format(item)
             elif type(item) == int:
-                tr = tr + "<td style='text-align: right'>{:,d}</td>".format(item)
+                tr = tr + "<td style='text-align: right; padding: 5px;border-bottom: 1px solid #ddd;'>{:,d}</td>".format(item)
             elif item == symbol:
-                tr = tr + "<td style='text-align: center'><a href='https://finance.yahoo.com/quote/%s'>%s</a></td>" % (symbol, symbol)
+                tr = tr + "<td style='text-align: center; padding: 5px;border-bottom: 1px solid #ddd;''><a href='https://finance.yahoo.com/quote/%s'>%s</a></td>" % (symbol, symbol)
             elif ":" in item and symbol in item:
-                tr = tr + "<td style='text-align: center'><a href='https://www.tradingview.com/chart/?symbol=%s'>View Chart</a></td>" % (item)
+                tr = tr + "<td style='text-align: center; padding: 5px;border-bottom: 1px solid #ddd;''><a href='https://www.tradingview.com/chart/?symbol=%s'>View Chart</a></td>" % (item)
             elif item == "Sell":
-                tr = tr + "<td style='text-align: center'><b>"+str(item)+"</b></td>"
+                tr = tr + "<td style='text-align: center; padding: 5px;border-bottom: 1px solid #ddd;''><b>"+str(item)+"</b></td>"
             else:
-                tr = tr + "<td style='text-align: center'>"+str(item)+"</td>"
+                tr = tr + "<td style='text-align: center; padding: 5px;border-bottom: 1px solid #ddd;''>"+str(item)+"</td>"
             table = table + tr
 
 
@@ -230,16 +314,22 @@ def send_alert_email(messages):
 
         s.quit()
         sleep(.1)
+        if 'nicholas' in to_address:
+            input()
 
 
 if __name__ == '__main__':
     ticker_q = multiprocessing.Queue()      # input queue
     return_q = multiprocessing.Queue()      # output queue
+    ticker_list = []
+    ticker_list = get_channel_symbols(ticker_list)  # finviz pattern recognition
+    ticker_list = get_sp500(ticker_list)            # get sp500 for testing purposes
+    ticker_list = get_current_trades(ticker_list)
 
-    get_channel_symbols(ticker_q)  # finviz pattern recognition
-    get_sp500(ticker_q)            # get sp500 for testing purposes
+    for i in ticker_list:
+        ticker_q.put(i)
 
-    for i in range(15):
+    for i in range(10):
         thread = stock_analyzer(ticker_q, return_q)
         thread.start()
 

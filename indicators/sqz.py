@@ -27,11 +27,13 @@ class stock():
         try:
             self.get_history()
 
-            if int(datetime.now().strftime('%H')) < 19:
-                self.get_current_price()
+
         except Exception as e:
             print(self.symbol, e)
             return
+
+        if int(datetime.now().strftime('%H')) < 19:
+            self.get_current_price()
 
         self.df = self.df.reset_index(drop=True)
 
@@ -57,23 +59,33 @@ class stock():
             print(e)
 
     def get_current_price(self):
-        url = "http://finviz.com/quote.ashx?t=%s" % self.symbol
-        html_text = r.get(url).text.encode('UTF-8')
-        dfs = pd.read_html(html_text)
-        df = dfs[7]
-        df = pd.DataFrame(df.values.reshape(-1, 2), columns=['key', 'value'])
-        df = df.set_index('key').T
-        cur_price = float(df['Price']['value'])
+        url = "http://www.marketwatch.com/investing/stock/%s" % self.symbol.replace("-",".")
+        html_text = r.get(url).text.replace(' class="bgVolume"',"")
+        try:
+            open_price = re.findall("Open: [0-9]*\.[0-9]*", html_text)[0].split(" ")[1]
+            current_price = re.findall("data bgLast\">[0-9]*\.[0-9]*", html_text)[0].split(">")[1]
+            volume = re.findall("Volume </span><span>[0-9,]*", html_text)[0].split(">")[2].replace(",","")
+
+            html_text = html_text.split("rangesection")[2]
+            html_text = html_text.split("rangeopen")[0]
+            low_price = re.findall("data\">\$[0-9]*\.[0-9]*", html_text)[0].split("$")[1]
+            high_price = re.findall("lastcolumn\">\$[0-9]*\.[0-9]*", html_text)[0].split("$")[1]
+        except Exception as e:
+            print(self.symbol, e)
+            
+            sleep(5000)
+
+
 
         cur_date = datetime.now().strftime("%Y-%m-%d")
         # todo, update with high and low aswell
         self.df = self.df.append(pd.DataFrame([{
             "Date": cur_date,
-            "Open": cur_price,
-            "Close": cur_price,
-            "Low": cur_price,
-            "High": cur_price,
-            "Volume": self.last_day_volume}]))
+            "Open": float(open_price),
+            "Close": float(current_price),
+            "Low": float(low_price),
+            "High": float(high_price),
+            "Volume": int(volume)}]))
 
 
 
@@ -114,6 +126,7 @@ class stock():
         self.df = self.df.dropna(subset=['upperBB'])
 
         result_list = []
+        coef_list = []
         cur_coef = None
         for i in self.df.iterrows():
 
@@ -128,9 +141,10 @@ class stock():
             prev_coef = cur_coef
             cur_coef = regr.coef_[0][0]
 
+
             if prev_coef is None:
                 continue
-
+            coef_list.append(prev_coef)
             if (cur_coef>0):
                 if cur_coef>prev_coef:
                     result_list.append('lime')
@@ -144,6 +158,8 @@ class stock():
 
 
         self.df = self.df[self.lengthKC+1:]
+
+        self.df['COEF'] = coef_list
         self.df['SQZ'] = result_list
 
-        self.df = self.df.ix[:,['Date','Open', 'Close','Volume', 'SQZ']]
+        self.df = self.df.ix[:,['Date','Open', 'Close','Volume', 'COEF', 'SQZ']]

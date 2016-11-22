@@ -42,12 +42,17 @@ for i in tickers.iterrows():
         if len(before_turn.unique()) != 1:
             continue
 
+        # coef must be high enough
+        if df.loc[i]['COEF']<0.15 and df.loc[i]['COEF']>-0.15:
+            continue
+
         # if current day switched to maroon
         if df.loc[i]['SQZ'] == 'maroon' and trade == 'Put':
             trade = 'Call'
 
         # if current day switched to green
         if df.loc[i]['SQZ'] == 'green' and trade == 'Call':
+
             trade = 'Put'
 
         # sell previous trade
